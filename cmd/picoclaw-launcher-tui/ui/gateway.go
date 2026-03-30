@@ -35,24 +35,26 @@ func getPidPath() string {
 }
 
 func isProcessRunning(pid int) bool {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid))
 		output, err := cmd.Output()
 		if err != nil {
 			return false
 		}
 		return strings.Contains(string(output), strconv.Itoa(pid))
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		cmd := exec.Command("ps", "aux")
 		output, err := cmd.Output()
 		if err != nil {
 			return false
 		}
 		return strings.Contains(string(output), fmt.Sprintf(" %d ", pid))
+	default:
+		// Linux and other unix-like systems.
+		_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
+		return err == nil
 	}
-	// Linux
-	_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
-	return err == nil
 }
 
 func getGatewayStatus() gatewayStatus {
