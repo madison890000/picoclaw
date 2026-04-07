@@ -333,6 +333,9 @@ func (c *BaseChannel) SetRunning(running bool) {
 	c.running.Store(running)
 }
 
+// GetBus returns the message bus for direct publishing (e.g. with StreamCallback).
+func (c *BaseChannel) GetBus() *bus.MessageBus { return c.bus }
+
 // SetMediaStore injects a MediaStore into the channel.
 func (c *BaseChannel) SetMediaStore(s media.MediaStore) { c.mediaStore = s }
 

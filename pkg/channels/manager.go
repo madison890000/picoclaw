@@ -379,6 +379,10 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 		m.initChannel("maixcam", "MaixCam")
 	}
 
+	if channels.WSAIPro.Enabled {
+		m.initChannel("ws_ai_pro", "WS AI Pro")
+	}
+
 	if channels.QQ.Enabled {
 		m.initChannel("qq", "QQ")
 	}
@@ -389,13 +393,6 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 
 	if channels.Slack.Enabled && channels.Slack.BotToken.String() != "" {
 		m.initChannel("slack", "Slack")
-	}
-
-	if channels.Matrix.Enabled &&
-		m.config.Channels.Matrix.Homeserver != "" &&
-		m.config.Channels.Matrix.UserID != "" &&
-		m.config.Channels.Matrix.AccessToken.String() != "" {
-		m.initChannel("matrix", "Matrix")
 	}
 
 	if channels.LINE.Enabled && channels.LINE.ChannelAccessToken.String() != "" {

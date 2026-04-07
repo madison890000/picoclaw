@@ -27,6 +27,10 @@ type InboundMessage struct {
 	MediaScope string            `json:"media_scope,omitempty"` // media lifecycle scope
 	SessionKey string            `json:"session_key"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
+
+	// StreamCallback, if set, is called with each text chunk during LLM streaming.
+	// The channel's Send() is still called with the final complete response.
+	StreamCallback func(chunk string) `json:"-"`
 }
 
 type OutboundMessage struct {
