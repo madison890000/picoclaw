@@ -265,6 +265,9 @@ func TestDefaultConfig_HeartbeatEnabled(t *testing.T) {
 	if !cfg.Heartbeat.Enabled {
 		t.Error("Heartbeat should be enabled by default")
 	}
+	if cfg.Heartbeat.Model != "" {
+		t.Error("Heartbeat model should be empty by default")
+	}
 }
 
 // TestDefaultConfig_WorkspacePath verifies workspace path is correctly set

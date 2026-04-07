@@ -244,6 +244,7 @@ export function ConfigPage() {
           heartbeat: {
             enabled: form.heartbeatEnabled,
             interval: heartbeatInterval,
+            model: form.heartbeatModel.trim(),
           },
           devices: {
             enabled: form.devicesEnabled,

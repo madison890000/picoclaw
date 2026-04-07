@@ -143,6 +143,12 @@ func DefaultConfig() *Config {
 				MaxConnections: 100,
 				AllowFrom:      FlexibleStringSlice{},
 			},
+			WSAIPro: WSAIProConfig{
+				Enabled:   false,
+				Host:      "127.0.0.1",
+				Port:      18793,
+				AllowFrom: FlexibleStringSlice{},
+			},
 		},
 		Hooks: HooksConfig{
 			Enabled: true,
@@ -513,6 +519,7 @@ func DefaultConfig() *Config {
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,
 			Interval: 30,
+			Model:    "",
 		},
 		Devices: DevicesConfig{
 			Enabled:    false,

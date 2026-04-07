@@ -448,18 +448,31 @@ export function RuntimeSection({ form, onFieldChange }: RuntimeSectionProps) {
       />
 
       {form.heartbeatEnabled && (
-        <Field
-          label={t("pages.config.heartbeat_interval")}
-          hint={t("pages.config.heartbeat_interval_hint")}
-          layout="setting-row"
-        >
-          <Input
-            type="number"
-            min={1}
-            value={form.heartbeatInterval}
-            onChange={(e) => onFieldChange("heartbeatInterval", e.target.value)}
-          />
-        </Field>
+        <>
+          <Field
+            label={t("pages.config.heartbeat_interval")}
+            hint={t("pages.config.heartbeat_interval_hint")}
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={form.heartbeatInterval}
+              onChange={(e) => onFieldChange("heartbeatInterval", e.target.value)}
+            />
+          </Field>
+          <Field
+            label={t("pages.config.heartbeat_model")}
+            hint={t("pages.config.heartbeat_model_hint")}
+            layout="setting-row"
+          >
+            <Input
+              value={form.heartbeatModel}
+              onChange={(e) => onFieldChange("heartbeatModel", e.target.value)}
+              placeholder={t("pages.config.heartbeat_model_placeholder")}
+            />
+          </Field>
+        </>
       )}
     </ConfigSectionCard>
   )

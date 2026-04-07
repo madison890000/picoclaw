@@ -38,6 +38,7 @@ type Config struct {
 	Heartbeat HeartbeatConfig `json:"heartbeat"          yaml:"-"`
 	Devices   DevicesConfig   `json:"devices"            yaml:"-"`
 	Voice     VoiceConfig     `json:"voice"              yaml:"-"`
+	Memory    MemoryConfig    `json:"memory,omitempty"   yaml:"-"`
 	// BuildInfo contains build-time version information
 	BuildInfo BuildInfo `json:"build_info,omitempty" yaml:"-"`
 
@@ -89,6 +90,68 @@ type ProcessHookConfig struct {
 	Env       map[string]string `json:"env,omitempty"`
 	Observe   []string          `json:"observe,omitempty"`
 	Intercept []string          `json:"intercept,omitempty"`
+}
+
+// MemoryConfig configures the memory system (Phase 0–2).
+type MemoryConfig struct {
+	// Write control (Phase 0)
+	Write MemoryWriteConfig `json:"write,omitempty"`
+
+	// Extraction control (Phase 1)
+	Extraction MemoryExtractionConfig `json:"extraction,omitempty"`
+
+	// Write quotas (Phase 1+2)
+	Quota MemoryQuotaConfig `json:"quota,omitempty"`
+
+	// Embedding & Search (Phase 2)
+	Embedding MemoryEmbeddingConfig `json:"embedding,omitempty"`
+	Search    MemorySearchConfig    `json:"search,omitempty"`
+	Index     MemoryIndexConfig     `json:"index,omitempty"`
+}
+
+// MemoryWriteConfig controls memory write behavior.
+type MemoryWriteConfig struct {
+	BufferMaxSize      int      `json:"buffer_max_size,omitempty"`
+	DebounceWindowMin  int      `json:"debounce_window_min,omitempty"`
+	DoNotRememberWords []string `json:"do_not_remember_keywords,omitempty"`
+}
+
+// MemoryExtractionConfig controls episode extraction.
+type MemoryExtractionConfig struct {
+	MinSessionMessages int      `json:"min_session_messages,omitempty"`
+	MinIntervalSec     int      `json:"min_interval_sec,omitempty"`
+	SkipChannels       []string `json:"skip_channels,omitempty"`
+}
+
+// MemoryQuotaConfig controls daily write limits.
+type MemoryQuotaConfig struct {
+	MemoryMdWritesPerDay  int `json:"memory_md_writes_per_day,omitempty"`
+	EpisodeExtractsPerDay int `json:"episode_extracts_per_day,omitempty"`
+	EmbeddingCallsPerDay  int `json:"embedding_calls_per_day,omitempty"`
+}
+
+// MemoryEmbeddingConfig configures the embedding provider.
+type MemoryEmbeddingConfig struct {
+	Provider   string `json:"provider,omitempty"`   // "openai", "none"
+	Model      string `json:"model,omitempty"`      // e.g. "text-embedding-3-small"
+	Dimensions int    `json:"dimensions,omitempty"` // vector dimensionality
+	Fallback   string `json:"fallback,omitempty"`   // "bm25" when unavailable
+}
+
+// MemorySearchConfig configures hybrid search parameters.
+type MemorySearchConfig struct {
+	VectorWeight          float64 `json:"vector_weight,omitempty"`
+	BM25Weight            float64 `json:"bm25_weight,omitempty"`
+	TopK                  int     `json:"top_k,omitempty"`
+	TemporalDecayHalfLife float64 `json:"temporal_decay_halflife_days,omitempty"`
+}
+
+// MemoryIndexConfig configures the indexing pipeline.
+type MemoryIndexConfig struct {
+	Storage            string `json:"storage,omitempty"` // "json"
+	ReindexDebounceMs  int    `json:"reindex_debounce_ms,omitempty"`
+	ChunkSizeTokens    int    `json:"chunk_size_tokens,omitempty"`
+	ChunkOverlapTokens int    `json:"chunk_overlap_tokens,omitempty"`
 }
 
 // BuildInfo contains build-time version information
@@ -298,6 +361,7 @@ type ChannelsConfig struct {
 	IRC          IRCConfig          `json:"irc"           yaml:"irc,omitempty"`
 	VK           VKConfig           `json:"vk"            yaml:"vk,omitempty"`
 	TeamsWebhook TeamsWebhookConfig `json:"teams_webhook" yaml:"teams_webhook,omitempty"`
+	WSAIPro      WSAIProConfig      `json:"ws_ai_pro"     yaml:"-"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -394,6 +458,14 @@ type MaixCamConfig struct {
 	Port               int                 `json:"port"                 env:"PICOCLAW_CHANNELS_MAIXCAM_PORT"`
 	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"PICOCLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
 	ReasoningChannelID string              `json:"reasoning_channel_id" env:"PICOCLAW_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
+}
+
+type WSAIProConfig struct {
+	Enabled            bool                `json:"enabled"              env:"PICOCLAW_CHANNELS_WS_AI_PRO_ENABLED"`
+	Host               string              `json:"host"                 env:"PICOCLAW_CHANNELS_WS_AI_PRO_HOST"`
+	Port               int                 `json:"port"                 env:"PICOCLAW_CHANNELS_WS_AI_PRO_PORT"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"PICOCLAW_CHANNELS_WS_AI_PRO_ALLOW_FROM"`
+	ReasoningChannelID string              `json:"reasoning_channel_id" env:"PICOCLAW_CHANNELS_WS_AI_PRO_REASONING_CHANNEL_ID"`
 }
 
 type QQConfig struct {
@@ -581,8 +653,9 @@ type TeamsWebhookTarget struct {
 }
 
 type HeartbeatConfig struct {
-	Enabled  bool `json:"enabled"  env:"PICOCLAW_HEARTBEAT_ENABLED"`
-	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+	Enabled  bool   `json:"enabled"  env:"PICOCLAW_HEARTBEAT_ENABLED"`
+	Interval int    `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+	Model    string `json:"model,omitempty" env:"PICOCLAW_HEARTBEAT_MODEL"`
 }
 
 type DevicesConfig struct {
@@ -934,6 +1007,16 @@ type ClawHubRegistryConfig struct {
 type MCPServerConfig struct {
 	// Enabled indicates whether this MCP server is active
 	Enabled bool `json:"enabled"`
+	// Kind identifies special non-generic MCP integrations that require
+	// host-side setup beyond launching a plain MCP server process.
+	// Example: "chrome-devtools".
+	Kind string `json:"kind,omitempty"`
+	// Mode further configures a special MCP integration.
+	// For kind="chrome-devtools", only "attach" is supported.
+	Mode string `json:"mode,omitempty"`
+	// Channel selects which installed Chrome channel should be attached when
+	// kind="chrome-devtools" and mode="attach". Defaults to "stable".
+	Channel string `json:"channel,omitempty"`
 	// Deferred controls whether this server's tools are registered as hidden (deferred/discovery mode).
 	// When nil, the global Discovery.Enabled setting applies.
 	// When explicitly set to true or false, it overrides the global setting for this server only.
