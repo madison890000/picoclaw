@@ -19,6 +19,13 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
+var validChromeChannels = map[string]struct{}{
+	"stable": {},
+	"beta":   {},
+	"dev":    {},
+	"canary": {},
+}
+
 // headerTransport is an http.RoundTripper that adds custom headers to requests
 type headerTransport struct {
 	base    http.RoundTripper
@@ -242,6 +249,11 @@ func (m *Manager) ConnectServer(
 	name string,
 	cfg config.MCPServerConfig,
 ) error {
+	cfg, err := normalizeSpecialServerConfig(name, cfg)
+	if err != nil {
+		return err
+	}
+
 	logger.InfoCF("mcp", "Connecting to MCP server",
 		map[string]any{
 			"server":     name,
@@ -425,6 +437,76 @@ func (m *Manager) ConnectServer(
 	return nil
 }
 
+func normalizeSpecialServerConfig(
+	name string,
+	cfg config.MCPServerConfig,
+) (config.MCPServerConfig, error) {
+	kind := strings.TrimSpace(strings.ToLower(cfg.Kind))
+	if kind == "" {
+		return cfg, nil
+	}
+
+	switch kind {
+	case "chrome-devtools":
+		return normalizeChromeDevToolsAttachConfig(name, cfg)
+	default:
+		return cfg, fmt.Errorf("unsupported MCP server kind %q for server %s", cfg.Kind, name)
+	}
+}
+
+func normalizeChromeDevToolsAttachConfig(
+	name string,
+	cfg config.MCPServerConfig,
+) (config.MCPServerConfig, error) {
+	mode := strings.TrimSpace(strings.ToLower(cfg.Mode))
+	if mode == "" {
+		mode = "attach"
+	}
+	if mode != "attach" {
+		return cfg, fmt.Errorf(
+			"unsupported chrome-devtools mode %q for server %s: only \"attach\" is supported",
+			cfg.Mode,
+			name,
+		)
+	}
+
+	if cfg.URL != "" {
+		return cfg, fmt.Errorf(
+			"chrome-devtools server %s does not support url transport in attach mode",
+			name,
+		)
+	}
+	if cfg.Type != "" && cfg.Type != "stdio" {
+		return cfg, fmt.Errorf(
+			"chrome-devtools server %s only supports stdio transport in attach mode",
+			name,
+		)
+	}
+
+	channel := strings.TrimSpace(strings.ToLower(cfg.Channel))
+	if channel == "" {
+		channel = "stable"
+	}
+	if _, ok := validChromeChannels[channel]; !ok {
+		return cfg, fmt.Errorf(
+			"invalid chrome-devtools channel %q for server %s (supported: stable, beta, dev, canary)",
+			cfg.Channel,
+			name,
+		)
+	}
+
+	args := []string{"-y", "chrome-devtools-mcp@latest", "--autoConnect"}
+	if channel != "stable" {
+		args = append(args, fmt.Sprintf("--channel=%s", channel))
+	}
+
+	cfg.Type = "stdio"
+	cfg.Command = "npx"
+	cfg.Args = args
+
+	return cfg, nil
+}
+
 // GetServers returns all connected servers
 func (m *Manager) GetServers() map[string]*ServerConnection {
 	m.mu.RLock()
@@ -473,6 +555,10 @@ func (m *Manager) CallTool(
 		return nil, fmt.Errorf("server %s not found", serverName)
 	}
 	defer m.wg.Done()
+
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
 
 	params := &mcp.CallToolParams{
 		Name:      toolName,

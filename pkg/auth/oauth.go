@@ -34,7 +34,7 @@ func OpenAIOAuthConfig() OAuthProviderConfig {
 	return OAuthProviderConfig{
 		Issuer:     "https://auth.openai.com",
 		ClientID:   "app_EMoamEEZ73f0CkXaXp7hrann",
-		Scopes:     "openid profile email offline_access",
+		Scopes:     "openid profile email offline_access api.connectors.read api.connectors.invoke",
 		Originator: "codex_cli_rs",
 		Port:       1455,
 	}

@@ -306,3 +306,61 @@ func TestClose_IdempotentOnEmptyManager(t *testing.T) {
 		t.Fatalf("second close should be idempotent, got: %v", err)
 	}
 }
+
+func TestNormalizeSpecialServerConfig_ChromeDevToolsAttach(t *testing.T) {
+	t.Run("defaults to stable autoConnect", func(t *testing.T) {
+		cfg, err := normalizeSpecialServerConfig("chrome", config.MCPServerConfig{
+			Enabled: true,
+			Kind:    "chrome-devtools",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Command != "npx" {
+			t.Fatalf("expected npx command, got %q", cfg.Command)
+		}
+		if got, want := strings.Join(cfg.Args, " "), "-y chrome-devtools-mcp@latest --autoConnect"; got != want {
+			t.Fatalf("unexpected args: got %q want %q", got, want)
+		}
+		if cfg.Type != "stdio" {
+			t.Fatalf("expected stdio type, got %q", cfg.Type)
+		}
+	})
+
+	t.Run("supports non-stable channels", func(t *testing.T) {
+		cfg, err := normalizeSpecialServerConfig("chrome", config.MCPServerConfig{
+			Enabled: true,
+			Kind:    "chrome-devtools",
+			Mode:    "attach",
+			Channel: "beta",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got, want := strings.Join(cfg.Args, " "), "-y chrome-devtools-mcp@latest --autoConnect --channel=beta"; got != want {
+			t.Fatalf("unexpected args: got %q want %q", got, want)
+		}
+	})
+
+	t.Run("rejects unsupported modes", func(t *testing.T) {
+		_, err := normalizeSpecialServerConfig("chrome", config.MCPServerConfig{
+			Enabled: true,
+			Kind:    "chrome-devtools",
+			Mode:    "launch",
+		})
+		if err == nil || !strings.Contains(err.Error(), "only \"attach\" is supported") {
+			t.Fatalf("expected attach-only validation error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects invalid channels", func(t *testing.T) {
+		_, err := normalizeSpecialServerConfig("chrome", config.MCPServerConfig{
+			Enabled: true,
+			Kind:    "chrome-devtools",
+			Channel: "nightly",
+		})
+		if err == nil || !strings.Contains(err.Error(), "invalid chrome-devtools channel") {
+			t.Fatalf("expected invalid channel error, got: %v", err)
+		}
+	})
+}

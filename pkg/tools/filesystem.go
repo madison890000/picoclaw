@@ -862,7 +862,7 @@ func NewWriteFileTool(
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &WriteFileTool{fs: buildFs(workspace, restrict, patterns)}
+	return &WriteFileTool{fs: buildWriteFs(workspace, restrict, patterns)}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -1213,6 +1213,34 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
 	return sandbox
+}
+
+// buildWriteFs builds a fileSystem for write tools that guards MEMORY.md from
+// direct writes. MEMORY.md must be written through the memory_write tool which
+// enforces dedup, timestamps, and section merging.
+func buildWriteFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
+	return &memoryGuardFs{
+		inner:     buildFs(workspace, restrict, patterns),
+		workspace: workspace,
+	}
+}
+
+// memoryGuardFs wraps a fileSystem and rejects writes to MEMORY.md.
+// This enforces the rule: "MEMORY.md writes go through memory_write tool only."
+type memoryGuardFs struct {
+	inner     fileSystem
+	workspace string
+}
+
+func (g *memoryGuardFs) ReadFile(path string) ([]byte, error)     { return g.inner.ReadFile(path) }
+func (g *memoryGuardFs) ReadDir(path string) ([]os.DirEntry, error) { return g.inner.ReadDir(path) }
+func (g *memoryGuardFs) Open(path string) (fs.File, error)          { return g.inner.Open(path) }
+
+func (g *memoryGuardFs) WriteFile(path string, data []byte) error {
+	if IsMemoryMdPath(path, g.workspace) {
+		return fmt.Errorf("MEMORY.md cannot be written directly — use the memory_write tool instead, which handles dedup, timestamps, and section merging automatically")
+	}
+	return g.inner.WriteFile(path, data)
 }
 
 // Helper to get a safe relative path for os.Root usage

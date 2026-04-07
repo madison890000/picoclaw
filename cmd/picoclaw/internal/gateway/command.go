@@ -15,6 +15,7 @@ func NewGatewayCommand() *cobra.Command {
 	var debug bool
 	var noTruncate bool
 	var allowEmpty bool
+	var port int
 
 	cmd := &cobra.Command{
 		Use:     "gateway",
@@ -34,7 +35,7 @@ func NewGatewayCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return gateway.Run(debug, internal.GetPicoclawHome(), internal.GetConfigPath(), allowEmpty)
+			return gateway.Run(debug, internal.GetPicoclawHome(), internal.GetConfigPath(), allowEmpty, port)
 		},
 	}
 
@@ -47,6 +48,7 @@ func NewGatewayCommand() *cobra.Command {
 		false,
 		"Continue starting even when no default model is configured",
 	)
+	cmd.Flags().IntVarP(&port, "port", "p", 0, "Override gateway port (default: from config or 18790)")
 
 	return cmd
 }

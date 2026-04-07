@@ -21,7 +21,7 @@ func NewEditFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Re
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &EditFileTool{fs: buildFs(workspace, restrict, patterns)}
+	return &EditFileTool{fs: buildWriteFs(workspace, restrict, patterns)}
 }
 
 func (t *EditFileTool) Name() string {
@@ -84,7 +84,7 @@ func NewAppendFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &AppendFileTool{fs: buildFs(workspace, restrict, patterns)}
+	return &AppendFileTool{fs: buildWriteFs(workspace, restrict, patterns)}
 }
 
 func (t *AppendFileTool) Name() string {
