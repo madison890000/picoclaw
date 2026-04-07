@@ -28,6 +28,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	openaicompat "github.com/sipeed/picoclaw/pkg/providers/openai_compat"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -90,6 +91,8 @@ type processOptions struct {
 	SendResponse            bool                // Whether to send response via bus
 	SuppressToolFeedback    bool                // Whether to suppress inline tool feedback messages
 	NoHistory               bool                // If true, don't load session history (for heartbeat)
+	NoTools                 bool                // If true, disable all tool calls (pure LLM response)
+	StreamCallback          func(chunk string)  // If set, stream LLM tokens to caller
 	SkipInitialSteeringPoll bool                // If true, skip the steering poll at loop start (used by Continue)
 }
 
@@ -111,6 +114,45 @@ const (
 	metadataKeyParentPeerKind  = "parent_peer_kind"
 	metadataKeyParentPeerID    = "parent_peer_id"
 )
+
+func isEmptyLLMResponse(resp *providers.LLMResponse) bool {
+	if resp == nil {
+		return true
+	}
+
+	if resp.Content != "" || resp.ReasoningContent != "" || resp.Reasoning != "" {
+		return false
+	}
+
+	return len(resp.ToolCalls) == 0
+}
+
+func emptyLLMResponseError(providerName, model string, resp *providers.LLMResponse) error {
+	finishReason := ""
+	if resp != nil {
+		finishReason = strings.TrimSpace(resp.FinishReason)
+	}
+	if finishReason == "" {
+		finishReason = "unknown"
+	}
+
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		providerName = "unknown"
+	}
+
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = "unknown"
+	}
+
+	return fmt.Errorf(
+		"empty response from provider=%s model=%s finish_reason=%s",
+		providerName,
+		model,
+		finishReason,
+	)
+}
 
 func NewAgentLoop(
 	cfg *config.Config,
@@ -1325,6 +1367,15 @@ func (al *AgentLoop) ProcessHeartbeat(
 	if agent == nil {
 		return "", fmt.Errorf("no default agent for heartbeat")
 	}
+	if model := strings.TrimSpace(al.cfg.Heartbeat.Model); model != "" {
+		agent = CloneAgentInstanceWithModel(
+			agent,
+			al.cfg,
+			&al.cfg.Agents.Defaults,
+			model,
+			al.cfg.Agents.Defaults.ModelFallbacks,
+		)
+	}
 	return al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:           "heartbeat",
 		Channel:              channel,
@@ -1410,6 +1461,14 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse:   defaultResponse,
 		EnableSummary:     true,
 		SendResponse:      false,
+		NoTools:           msg.Metadata["no_tools"] == "true",
+		StreamCallback:    msg.StreamCallback,
+	}
+
+	// Inject bearer token into context for JWT-forwarding auth (auth_method=jwt).
+	// The token comes from the Electron client via ClientMessage.Token → Metadata.
+	if token := msg.Metadata["bearer_token"]; token != "" {
+		ctx = openaicompat.WithBearerToken(ctx, token)
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -1887,7 +1946,11 @@ turnLoop:
 			})
 
 		gracefulTerminal, _ := ts.gracefulInterruptRequested()
-		providerToolDefs := ts.agent.Tools.ToProviderDefs()
+		// Build tool definitions (empty when NoTools is set)
+		var providerToolDefs []providers.ToolDefinition
+		if !ts.opts.NoTools {
+			providerToolDefs = ts.agent.Tools.ToProviderDefs()
+		}
 
 		// Native web search support (from HEAD)
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
@@ -1934,6 +1997,9 @@ turnLoop:
 		}
 		if useNativeSearch {
 			llmOpts["native_search"] = true
+		}
+		if ts.opts.StreamCallback != nil {
+			llmOpts["stream_callback"] = ts.opts.StreamCallback
 		}
 		if ts.agent.ThinkingLevel != ThinkingOff {
 			if tc, ok := ts.agent.Provider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
@@ -2015,6 +2081,11 @@ turnLoop:
 			al.activeRequests.Add(1)
 			defer al.activeRequests.Done()
 
+			selectedProvider := ""
+			if len(activeCandidates) > 0 {
+				selectedProvider = activeCandidates[0].Provider
+			}
+
 			if len(activeCandidates) > 1 && al.fallback != nil {
 				fbResult, fbErr := al.fallback.Execute(
 					providerCtx,
@@ -2030,6 +2101,8 @@ turnLoop:
 				if fbErr != nil {
 					return nil, fbErr
 				}
+				selectedProvider = fbResult.Provider
+				llmModel = fbResult.Model
 				if fbResult.Provider != "" && len(fbResult.Attempts) > 0 {
 					logger.InfoCF(
 						"agent",
@@ -2038,9 +2111,59 @@ turnLoop:
 						map[string]any{"agent_id": ts.agent.ID, "iteration": iteration},
 					)
 				}
+				if isEmptyLLMResponse(fbResult.Response) {
+					fields := map[string]any{
+						"agent_id":      ts.agent.ID,
+						"iteration":     iteration,
+						"provider":      selectedProvider,
+						"model":         llmModel,
+						"finish_reason": "",
+						"tool_calls":    0,
+					}
+					if fbResult.Response != nil {
+						fields["finish_reason"] = fbResult.Response.FinishReason
+						fields["tool_calls"] = len(fbResult.Response.ToolCalls)
+						fields["content_chars"] = len(fbResult.Response.Content)
+						fields["reasoning_chars"] = len(fbResult.Response.ReasoningContent) + len(fbResult.Response.Reasoning)
+						if fbResult.Response.Usage != nil {
+							fields["prompt_tokens"] = fbResult.Response.Usage.PromptTokens
+							fields["completion_tokens"] = fbResult.Response.Usage.CompletionTokens
+							fields["total_tokens"] = fbResult.Response.Usage.TotalTokens
+						}
+					}
+					logger.ErrorCF("agent", "LLM returned empty response", fields)
+					return nil, emptyLLMResponseError(selectedProvider, llmModel, fbResult.Response)
+				}
 				return fbResult.Response, nil
 			}
-			return activeProvider.Chat(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts)
+			resp, err := activeProvider.Chat(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts)
+			if err != nil {
+				return nil, err
+			}
+			if isEmptyLLMResponse(resp) {
+				fields := map[string]any{
+					"agent_id":      ts.agent.ID,
+					"iteration":     iteration,
+					"provider":      selectedProvider,
+					"model":         llmModel,
+					"finish_reason": "",
+					"tool_calls":    0,
+				}
+				if resp != nil {
+					fields["finish_reason"] = resp.FinishReason
+					fields["tool_calls"] = len(resp.ToolCalls)
+					fields["content_chars"] = len(resp.Content)
+					fields["reasoning_chars"] = len(resp.ReasoningContent) + len(resp.Reasoning)
+					if resp.Usage != nil {
+						fields["prompt_tokens"] = resp.Usage.PromptTokens
+						fields["completion_tokens"] = resp.Usage.CompletionTokens
+						fields["total_tokens"] = resp.Usage.TotalTokens
+					}
+				}
+				logger.ErrorCF("agent", "LLM returned empty response", fields)
+				return nil, emptyLLMResponseError(selectedProvider, llmModel, resp)
+			}
+			return resp, nil
 		}
 
 		var response *providers.LLMResponse

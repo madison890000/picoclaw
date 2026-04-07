@@ -8,7 +8,6 @@
 package common
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -170,7 +169,7 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 	var apiResponse struct {
 		Choices []struct {
 			Message struct {
-				Content          string            `json:"content"`
+				Content          json.RawMessage   `json:"content"`
 				ReasoningContent string            `json:"reasoning_content"`
 				Reasoning        string            `json:"reasoning"`
 				ReasoningDetails []ReasoningDetail `json:"reasoning_details"`
@@ -205,6 +204,12 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 	}
 
 	choice := apiResponse.Choices[0]
+
+	// Parse content: supports both plain string and array-of-content-blocks formats.
+	// Some newer models (e.g. gpt-5.4) return content as:
+	//   [{"type":"text","text":"..."},{"type":"refusal","refusal":"..."}]
+	content := extractContent(choice.Message.Content)
+
 	toolCalls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
 	for _, tc := range choice.Message.ToolCalls {
 		arguments := make(map[string]any)
@@ -240,7 +245,7 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 	}
 
 	return &LLMResponse{
-		Content:          choice.Message.Content,
+		Content:          content,
 		ReasoningContent: choice.Message.ReasoningContent,
 		Reasoning:        choice.Message.Reasoning,
 		ReasoningDetails: choice.Message.ReasoningDetails,
@@ -248,6 +253,46 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 		FinishReason:     normalizeFinishReason(choice.FinishReason),
 		Usage:            apiResponse.Usage,
 	}, nil
+}
+
+// extractContent parses the "content" field from an OpenAI chat completion response.
+// It handles two formats:
+//   - String: "hello" → "hello"
+//   - Array of content blocks: [{"type":"text","text":"hello"}] → "hello"
+//
+// For array format, text parts are concatenated and refusal parts are included as-is.
+func extractContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	// Try as plain string first (most common case).
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+
+	// Try as array of content blocks.
+	var blocks []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		Refusal  string `json:"refusal"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		var sb strings.Builder
+		for _, b := range blocks {
+			switch b.Type {
+			case "text":
+				sb.WriteString(b.Text)
+			case "refusal":
+				sb.WriteString(b.Refusal)
+			}
+		}
+		return sb.String()
+	}
+
+	// Fallback: return raw string representation.
+	return strings.TrimSpace(string(raw))
 }
 
 // normalizeFinishReason normalizes finish_reason values across providers.
@@ -316,17 +361,30 @@ func HandleErrorResponse(resp *http.Response, apiBase string) error {
 // then parses the JSON response into an LLMResponse.
 func ReadAndParseResponse(resp *http.Response, apiBase string) (*LLMResponse, error) {
 	contentType := resp.Header.Get("Content-Type")
-	reader := bufio.NewReader(resp.Body)
-	prefix, err := reader.Peek(256)
-	if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
-		return nil, fmt.Errorf("failed to inspect response: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil && !(err == io.ErrUnexpectedEOF && len(body) > 0) {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	prefix := body
+	if len(prefix) > 256 {
+		prefix = prefix[:256]
 	}
 	if LooksLikeHTML(prefix, contentType) {
 		return nil, WrapHTMLResponseError(resp.StatusCode, prefix, contentType, apiBase)
 	}
-	out, err := ParseResponse(reader)
+	out, err := ParseResponse(bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JSON response: %w", err)
+	}
+	if out != nil && out.Content == "" && out.ReasoningContent == "" && out.Reasoning == "" && len(out.ToolCalls) == 0 {
+		log.Printf(
+			"common: parsed empty JSON response from %s (status=%d, content-type=%s, finish_reason=%s, body=%s)",
+			apiBase,
+			resp.StatusCode,
+			contentType,
+			out.FinishReason,
+			ResponsePreview(body, 2048),
+		)
 	}
 	return out, nil
 }

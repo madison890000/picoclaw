@@ -1050,20 +1050,13 @@ func TestSupportsPromptCacheKey(t *testing.T) {
 	}
 }
 
-func TestBuildToolsList_NativeSearchAddsWebSearchPreview(t *testing.T) {
+func TestBuildToolsList_NativeSearchDoesNotAddExtraTool(t *testing.T) {
 	tools := []ToolDefinition{
 		{Type: "function", Function: ToolFunctionDefinition{Name: "read_file", Description: "read"}},
 	}
 	result := buildToolsList(tools, true)
-	if len(result) != 2 {
-		t.Fatalf("len(result) = %d, want 2", len(result))
-	}
-	wsEntry, ok := result[1].(map[string]any)
-	if !ok {
-		t.Fatalf("web search entry is %T, want map[string]any", result[1])
-	}
-	if wsEntry["type"] != "web_search_preview" {
-		t.Fatalf("type = %v, want web_search_preview", wsEntry["type"])
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1 (only read_file, no extra tool entry)", len(result))
 	}
 }
 
@@ -1078,8 +1071,8 @@ func TestBuildToolsList_NativeSearchFiltersClientWebSearch(t *testing.T) {
 			t.Fatal("client-side web_search should be filtered out when native search is enabled")
 		}
 	}
-	if len(result) != 2 { // read_file + web_search_preview
-		t.Fatalf("len(result) = %d, want 2 (read_file + web_search_preview)", len(result))
+	if len(result) != 1 { // read_file only (web_search filtered out)
+		t.Fatalf("len(result) = %d, want 1 (read_file only)", len(result))
 	}
 }
 
@@ -1175,16 +1168,17 @@ func TestProviderChat_NativeSearchToolInjected(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools is %T, want []any", requestBody["tools"])
 	}
-	if len(toolsRaw) != 2 {
-		t.Fatalf("len(tools) = %d, want 2 (read_file + web_search_preview)", len(toolsRaw))
+	if len(toolsRaw) != 1 {
+		t.Fatalf("len(tools) = %d, want 1 (read_file only)", len(toolsRaw))
 	}
 
-	lastTool, ok := toolsRaw[1].(map[string]any)
+	// Verify web_search_options is set as a top-level parameter
+	wsOpts, ok := requestBody["web_search_options"]
 	if !ok {
-		t.Fatalf("last tool is %T, want map[string]any", toolsRaw[1])
+		t.Fatal("web_search_options should be set when native search is enabled")
 	}
-	if lastTool["type"] != "web_search_preview" {
-		t.Fatalf("last tool type = %v, want web_search_preview", lastTool["type"])
+	if _, ok := wsOpts.(map[string]any); !ok {
+		t.Fatalf("web_search_options is %T, want map[string]any", wsOpts)
 	}
 }
 
@@ -1270,9 +1264,13 @@ func TestProviderChat_NativeSearchIgnoredOnNonOpenAI(t *testing.T) {
 		t.Fatalf("Chat() error = %v", err)
 	}
 
-	// Should not have tools at all (no tools passed, and we must not add web_search_preview)
+	// Should not have tools at all (no tools passed, and native search should be ignored)
 	if toolsRaw, ok := requestBody["tools"]; ok {
 		t.Fatalf("tools should be omitted for non-OpenAI when only native_search was requested, got %v", toolsRaw)
+	}
+	// Should not have web_search_options either
+	if wsOpts, ok := requestBody["web_search_options"]; ok {
+		t.Fatalf("web_search_options should be omitted for non-OpenAI, got %v", wsOpts)
 	}
 }
 

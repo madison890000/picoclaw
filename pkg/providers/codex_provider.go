@@ -104,9 +104,13 @@ func (p *CodexProvider) Chat(
 	defer stream.Close()
 
 	var resp *responses.Response
+	var outputItems []responses.ResponseOutputItemUnion
 	for stream.Next() {
 		evt := stream.Current()
-		if evt.Type == "response.completed" || evt.Type == "response.failed" || evt.Type == "response.incomplete" {
+		switch evt.Type {
+		case "response.output_item.done":
+			outputItems = append(outputItems, evt.Item)
+		case "response.completed", "response.failed", "response.incomplete":
 			evtResp := evt.Response
 			if evtResp.ID != "" {
 				evtRespCopy := evtResp
@@ -151,6 +155,12 @@ func (p *CodexProvider) Chat(
 		}
 		logger.ErrorCF("provider.codex", "Codex stream ended without completed response event", fields)
 		return nil, fmt.Errorf("codex API call: stream ended without completed response")
+	}
+
+	// The response.completed event does not include accumulated output items;
+	// they are delivered via response.output_item.done events during streaming.
+	if len(resp.Output) == 0 && len(outputItems) > 0 {
+		resp.Output = outputItems
 	}
 
 	return orc.ParseResponseFromStruct(resp), nil

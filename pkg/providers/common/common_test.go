@@ -1,7 +1,10 @@
 package common
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -48,6 +51,36 @@ func TestNewHTTPClient_InvalidProxy(t *testing.T) {
 	client := NewHTTPClient("://bad-url")
 	if client == nil {
 		t.Fatal("expected non-nil client even with invalid proxy")
+	}
+}
+
+func TestReadAndParseResponse_LogsRawBodyForEmptyResponse(t *testing.T) {
+	var logBuf bytes.Buffer
+	prevWriter := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	log.SetFlags(0)
+	defer log.SetOutput(prevWriter)
+	defer log.SetFlags(prevFlags)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"choices":[]}`)),
+	}
+
+	out, err := ReadAndParseResponse(resp, "https://api.openai.com/v1")
+	if err != nil {
+		t.Fatalf("ReadAndParseResponse error = %v", err)
+	}
+	if out == nil {
+		t.Fatal("ReadAndParseResponse returned nil response")
+	}
+	if !strings.Contains(logBuf.String(), `parsed empty JSON response`) {
+		t.Fatalf("log output = %q, want empty-response debug line", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), `{"choices":[]}`) {
+		t.Fatalf("log output = %q, want raw response body preview", logBuf.String())
 	}
 }
 
@@ -238,6 +271,53 @@ func TestParseResponse_InvalidJSON(t *testing.T) {
 	_, err := ParseResponse(strings.NewReader("not json"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParseResponse_ContentBlocksArray(t *testing.T) {
+	body := `{"choices":[{"message":{"content":[{"type":"text","text":"Hello world"}],"tool_calls":[]},"finish_reason":"stop"}]}`
+	out, err := ParseResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if out.Content != "Hello world" {
+		t.Errorf("Content = %q, want %q", out.Content, "Hello world")
+	}
+}
+
+func TestParseResponse_ContentBlocksMultiple(t *testing.T) {
+	body := `{"choices":[{"message":{"content":[{"type":"text","text":"Hello "},{"type":"text","text":"world"}],"tool_calls":[]},"finish_reason":"stop"}]}`
+	out, err := ParseResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if out.Content != "Hello world" {
+		t.Errorf("Content = %q, want %q", out.Content, "Hello world")
+	}
+}
+
+func TestParseResponse_ContentBlocksRefusal(t *testing.T) {
+	body := `{"choices":[{"message":{"content":[{"type":"refusal","refusal":"I cannot help with that."}],"tool_calls":[]},"finish_reason":"stop"}]}`
+	out, err := ParseResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if out.Content != "I cannot help with that." {
+		t.Errorf("Content = %q, want %q", out.Content, "I cannot help with that.")
+	}
+}
+
+func TestParseResponse_ContentNull(t *testing.T) {
+	body := `{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"test","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`
+	out, err := ParseResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if out.Content != "" {
+		t.Errorf("Content = %q, want empty", out.Content)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Errorf("len(ToolCalls) = %d, want 1", len(out.ToolCalls))
 	}
 }
 

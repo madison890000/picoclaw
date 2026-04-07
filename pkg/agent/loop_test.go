@@ -2191,7 +2191,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 	}
 }
 
-func TestAgentLoop_EmptyModelResponseUsesAccurateFallback(t *testing.T) {
+func TestAgentLoop_EmptyModelResponseReturnsError(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -2214,11 +2214,14 @@ func TestAgentLoop_EmptyModelResponseUsesAccurateFallback(t *testing.T) {
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	response, err := al.ProcessDirectWithChannel(context.Background(), "hello", "empty-response", "test", "chat1")
-	if err != nil {
-		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
+	if err == nil {
+		t.Fatal("ProcessDirectWithChannel error = nil, want non-nil")
 	}
-	if response != defaultResponse {
-		t.Fatalf("response = %q, want %q", response, defaultResponse)
+	if response != "" {
+		t.Fatalf("response = %q, want empty", response)
+	}
+	if !strings.Contains(err.Error(), "empty response from provider=") {
+		t.Fatalf("error = %q, want empty response details", err.Error())
 	}
 }
 

@@ -924,8 +924,12 @@ func (m *simpleMockProviderAPI) Chat(
 	model string,
 	options map[string]any,
 ) (*providers.LLMResponse, error) {
+	content := m.response
+	if content == "" {
+		content = "ok"
+	}
 	return &providers.LLMResponse{
-		Content: m.response,
+		Content: content,
 	}, nil
 }
 

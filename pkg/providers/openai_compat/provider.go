@@ -30,14 +30,36 @@ type (
 	ReasoningDetail        = protocoltypes.ReasoningDetail
 )
 
+// bearerTokenKey is the context key for per-request bearer tokens.
+// Channels (e.g. ws_ai_pro) inject the token into context; the provider
+// reads it here to set the Authorization header.
+type bearerTokenKeyType struct{}
+
+var bearerTokenKey = bearerTokenKeyType{}
+
+// WithBearerToken returns a new context carrying the given bearer token.
+// The openai_compat provider reads this to set Authorization headers.
+func WithBearerToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, bearerTokenKey, token)
+}
+
+// BearerTokenFromContext extracts the bearer token from ctx, if any.
+func BearerTokenFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(bearerTokenKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 type Provider struct {
-	apiKey         string
-	apiBase        string
-	maxTokensField string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
-	httpClient     *http.Client
-	extraBody      map[string]any // Additional fields to inject into request body
-	customHeaders  map[string]string
-	userAgent      string
+	apiKey          string
+	apiBase         string
+	maxTokensField  string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
+	httpClient      *http.Client
+	useContextToken bool           // If true, read bearer token from context instead of apiKey
+	extraBody       map[string]any // Additional fields to inject into request body
+	customHeaders   map[string]string
+	userAgent       string
 }
 
 type Option func(*Provider)
@@ -79,6 +101,16 @@ func WithRequestTimeout(timeout time.Duration) Option {
 		if timeout > 0 {
 			p.httpClient.Timeout = timeout
 		}
+	}
+}
+
+// WithContextTokenSource tells the provider to read the bearer token from
+// the request context (set via WithBearerToken) instead of using a static apiKey.
+// Used for JWT-forwarding auth where the Electron client passes its token
+// per-request and picoclaw forwards it to the API proxy.
+func WithContextTokenSource() Option {
+	return func(p *Provider) {
+		p.useContextToken = true
 	}
 }
 
@@ -145,6 +177,11 @@ func (p *Provider) buildRequestBody(
 		requestBody["tools"] = buildToolsList(tools, nativeSearch)
 		requestBody["tool_choice"] = "auto"
 	}
+	// For OpenAI Chat Completions, native web search uses the top-level
+	// "web_search_options" parameter instead of a tool entry.
+	if nativeSearch {
+		requestBody["web_search_options"] = map[string]any{}
+	}
 
 	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok {
 		fieldName := p.maxTokensField
@@ -210,6 +247,7 @@ func (p *Provider) Chat(
 
 	requestBody := p.buildRequestBody(messages, tools, model, options)
 
+
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -224,8 +262,8 @@ func (p *Provider) Chat(
 	if p.userAgent != "" {
 		req.Header.Set("User-Agent", p.userAgent)
 	}
-	if p.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if err := p.setAuthHeader(req); err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
 	}
 	p.applyCustomHeaders(req)
 
@@ -274,8 +312,8 @@ func (p *Provider) ChatStream(
 	if p.userAgent != "" {
 		req.Header.Set("User-Agent", p.userAgent)
 	}
-	if p.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if err := p.setAuthHeader(req); err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
 	}
 	p.applyCustomHeaders(req)
 
@@ -453,16 +491,32 @@ func normalizeModel(model, apiBase string) string {
 	return model
 }
 
+// setAuthHeader sets the Authorization header on the request.
+// If useContextToken is set, it reads the bearer token from the request's
+// context (injected by the channel via WithBearerToken); otherwise it uses
+// the static apiKey.
+func (p *Provider) setAuthHeader(req *http.Request) error {
+	if p.useContextToken {
+		token := BearerTokenFromContext(req.Context())
+		if token == "" {
+			return fmt.Errorf("auth_method=jwt but no bearer token in context")
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return nil
+	}
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	return nil
+}
+
 func buildToolsList(tools []ToolDefinition, nativeSearch bool) []any {
-	result := make([]any, 0, len(tools)+1)
+	result := make([]any, 0, len(tools))
 	for _, t := range tools {
 		if nativeSearch && strings.EqualFold(t.Function.Name, "web_search") {
 			continue
 		}
 		result = append(result, t)
-	}
-	if nativeSearch {
-		result = append(result, map[string]any{"type": "web_search_preview"})
 	}
 	return result
 }

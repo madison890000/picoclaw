@@ -15,6 +15,7 @@ import (
 	anthropicmessages "github.com/sipeed/picoclaw/pkg/providers/anthropic_messages"
 	"github.com/sipeed/picoclaw/pkg/providers/azure"
 	"github.com/sipeed/picoclaw/pkg/providers/bedrock"
+	openaicompat "github.com/sipeed/picoclaw/pkg/providers/openai_compat"
 )
 
 type protocolMeta struct {
@@ -143,6 +144,24 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 				return nil, "", err
 			}
 			return provider, modelID, nil
+		}
+		// OpenAI via proxy with JWT forwarding — no API key needed.
+		// The token is passed per-request via context (set by the channel/agent loop).
+		// The proxy validates the JWT and injects the real upstream API key.
+		if cfg.AuthMethod == "jwt" {
+			if cfg.APIBase == "" {
+				return nil, "", fmt.Errorf("api_base is required for auth_method=jwt (model: %s)", cfg.Model)
+			}
+			return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
+				"", // no static API key
+				cfg.APIBase,
+				cfg.Proxy,
+				cfg.MaxTokensField,
+				"",
+				cfg.RequestTimeout,
+				nil,
+				openaicompat.WithContextTokenSource(),
+			), modelID, nil
 		}
 		// OpenAI with API key
 		if cfg.APIKey() == "" && cfg.APIBase == "" {
