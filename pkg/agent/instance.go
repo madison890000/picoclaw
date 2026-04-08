@@ -12,6 +12,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/memory/curated"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -121,6 +122,16 @@ func NewAgentInstance(
 			mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
 		).
 		WithSplitOnMarker(cfg.Agents.Defaults.SplitOnMarker)
+
+	// Register curated memory tool (persistent cross-session memory).
+	if curatedStore := contextBuilder.CuratedStore(); curatedStore != nil {
+		toolsRegistry.Register(curated.NewCuratedMemoryTool(curatedStore))
+	}
+
+	// Register skill manager tool (autonomous skill CRUD).
+	if sl := contextBuilder.SkillsLoader(); sl != nil {
+		toolsRegistry.Register(tools.NewSkillManagerTool(sl, workspace))
+	}
 
 	agentID := routing.DefaultAgentID
 	agentName := ""

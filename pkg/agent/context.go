@@ -14,6 +14,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory/curated"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/utils"
@@ -22,7 +23,8 @@ import (
 type ContextBuilder struct {
 	workspace          string
 	skillsLoader       *skills.SkillsLoader
-	memory             *MemoryStore
+	memory             *MemoryStore       // legacy workspace memory (daily notes)
+	curatedMemory      *curated.CuratedStore // curated persistent memory (MEMORY.md + USER.md)
 	toolDiscoveryBM25  bool
 	toolDiscoveryRegex bool
 	splitOnMarker      bool
@@ -71,10 +73,17 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	}
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
 
+	// Initialize the curated memory store (persistent MEMORY.md + USER.md).
+	curatedStore := curated.NewCuratedStore()
+	if err := curatedStore.LoadFromDisk(); err != nil {
+		logger.WarnCF("agent", "Failed to load curated memory", map[string]any{"error": err.Error()})
+	}
+
 	return &ContextBuilder{
-		workspace:    workspace,
-		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		memory:       NewMemoryStore(workspace),
+		workspace:     workspace,
+		skillsLoader:  skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
+		memory:        NewMemoryStore(workspace),
+		curatedMemory: curatedStore,
 	}
 }
 
@@ -100,12 +109,12 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
+3. **Memory** - When interacting with me if something seems memorable, use the memory tool to save it. Use target 'user' for user preferences and 'memory' for environment facts and lessons learned.
 
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		version, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
@@ -149,10 +158,24 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 %s`, skillsSummary))
 	}
 
-	// Memory context
+	// Memory context — curated persistent memory (frozen snapshot)
+	if cb.curatedMemory != nil {
+		var memParts []string
+		if block := cb.curatedMemory.FormatForSystemPrompt("memory"); block != "" {
+			memParts = append(memParts, block)
+		}
+		if block := cb.curatedMemory.FormatForSystemPrompt("user"); block != "" {
+			memParts = append(memParts, block)
+		}
+		if len(memParts) > 0 {
+			parts = append(parts, "# Persistent Memory\n\n"+strings.Join(memParts, "\n\n"))
+		}
+	}
+
+	// Legacy workspace memory (daily notes)
 	memoryContext := cb.memory.GetMemoryContext()
 	if memoryContext != "" {
-		parts = append(parts, "# Memory\n\n"+memoryContext)
+		parts = append(parts, "# Workspace Memory\n\n"+memoryContext)
 	}
 
 	// Multi-Message Sending (if enabled)
@@ -850,4 +873,14 @@ func (cb *ContextBuilder) GetSkillsInfo() map[string]any {
 		"available": len(allSkills),
 		"names":     skillNames,
 	}
+}
+
+// CuratedStore returns the curated memory store for tool registration.
+func (cb *ContextBuilder) CuratedStore() *curated.CuratedStore {
+	return cb.curatedMemory
+}
+
+// SkillsLoader returns the skills loader for tool registration.
+func (cb *ContextBuilder) SkillsLoader() *skills.SkillsLoader {
+	return cb.skillsLoader
 }
