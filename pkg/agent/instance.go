@@ -278,6 +278,39 @@ func populateCandidateProvidersFromNames(
 	}
 }
 
+// CloneAgentInstanceWithModel creates a shallow copy of an AgentInstance with
+// a different model and fallback chain. Used for heartbeat and other secondary
+// loops that need a different model than the default agent.
+func CloneAgentInstanceWithModel(
+	base *AgentInstance,
+	cfg *config.Config,
+	defaults *config.AgentDefaults,
+	model string,
+	fallbacks []string,
+) *AgentInstance {
+	model = strings.TrimSpace(model)
+	if base == nil || model == "" {
+		return base
+	}
+
+	clone := *base
+	clone.Model = model
+	clone.Fallbacks = append([]string(nil), fallbacks...)
+
+	// Resolve thinking level for the new model.
+	var thinkingLevelStr string
+	if mc, err := cfg.GetModelConfig(model); err == nil {
+		thinkingLevelStr = mc.ThinkingLevel
+	}
+	clone.ThinkingLevel = parseThinkingLevel(thinkingLevelStr)
+
+	// Resolve provider candidates for the new model.
+	clone.Candidates = resolveModelCandidates(cfg, defaults.Provider, model, fallbacks)
+	clone.Router = nil
+	clone.LightCandidates = nil
+	return &clone
+}
+
 // resolveAgentWorkspace determines the workspace directory for an agent.
 func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) string {
 	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
