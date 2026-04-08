@@ -179,7 +179,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			userAgent,
 			cfg.RequestTimeout,
 			cfg.ExtraBody,
-			cfg.CustomHeaders,
+			openaicompat.WithCustomHeaders(cfg.CustomHeaders),
 		), modelID, nil
 
 	case "azure", "azure-openai":
@@ -258,7 +258,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			userAgent,
 			cfg.RequestTimeout,
 			cfg.ExtraBody,
-			cfg.CustomHeaders,
+			openaicompat.WithCustomHeaders(cfg.CustomHeaders),
 		), modelID, nil
 
 	case "minimax":
@@ -285,7 +285,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			userAgent,
 			cfg.RequestTimeout,
 			extraBody,
-			cfg.CustomHeaders,
+			openaicompat.WithCustomHeaders(cfg.CustomHeaders),
 		), modelID, nil
 
 	case "anthropic":
@@ -313,7 +313,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			userAgent,
 			cfg.RequestTimeout,
 			cfg.ExtraBody,
-			cfg.CustomHeaders,
+			openaicompat.WithCustomHeaders(cfg.CustomHeaders),
 		), modelID, nil
 
 	case "anthropic-messages":

@@ -1243,6 +1243,18 @@ func (g *memoryGuardFs) WriteFile(path string, data []byte) error {
 	return g.inner.WriteFile(path, data)
 }
 
+// IsMemoryMdPath returns true if path points to MEMORY.md inside the workspace
+// memories directory. Only blocks the specific workspace memory file, not any
+// arbitrary file named MEMORY.md elsewhere in the filesystem.
+func IsMemoryMdPath(path, workspace string) bool {
+	if workspace == "" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	target := filepath.Join(workspace, "memories", "MEMORY.md")
+	return strings.EqualFold(clean, target)
+}
+
 // Helper to get a safe relative path for os.Root usage
 func getSafeRelPath(workspace, path string) (string, error) {
 	if workspace == "" {
