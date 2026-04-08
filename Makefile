@@ -228,6 +228,16 @@ build-all: generate
 	GOOS=netbsd GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-arm64 ./$(CMD_DIR)
 	@echo "All builds complete"
 
+## build-macos-universal: Build macOS Universal Binary (arm64 + amd64)
+build-macos-universal: generate
+	@echo "Building macOS Universal Binary..."
+	@mkdir -p $(BUILD_DIR)
+	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./$(CMD_DIR)
+	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./$(CMD_DIR)
+	lipo -create -output $(BUILD_DIR)/$(BINARY_NAME)-darwin-universal $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64
+	@$(LNCMD) $(BINARY_NAME)-darwin-universal $(BUILD_DIR)/$(BINARY_NAME)
+	@echo "Universal Binary: $(BUILD_DIR)/$(BINARY_NAME)-darwin-universal"
+
 ## install: Install picoclaw to system and copy builtin skills
 install: build
 	@echo "Installing $(BINARY_NAME)..."
